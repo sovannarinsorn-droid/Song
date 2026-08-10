@@ -176,7 +176,7 @@ def search_youtube(query, max_results=MAX_RESULTS):
         "extract_flat": "in_playlist",
         "default_search": f"ytsearch{max_results}",
         "noplaylist": True,
-        "js_runtimes": ["node"],
+        "js_runtimes": {"node": {}},
     }
     with yt_dlp.YoutubeDL(ydl_opts) as ydl:
         info = ydl.extract_info(query, download=False)
@@ -224,7 +224,7 @@ def download_audio(video_url, out_path_template, max_retries=4):
         "quiet": True,
         "no_warnings": True,
         "noplaylist": True,
-        "js_runtimes": ["node"],
+        "js_runtimes": {"node": {}},
     }
 
     cookies_path = _find_cookies_file()
