@@ -199,7 +199,10 @@ COOKIES_FILE = os.path.join(DATA_DIR, "cookies.txt")
 
 
 def _find_cookies_file():
-    """ស្វែងរកឯកសារ cookies.txt ពី DATA_DIR ឬ root folder"""
+    """ស្វែងរកឯកសារ cookies.txt ពី DATA_DIR ឬ root folder
+    កំណត់ USE_COOKIES=0 ជា env var ដើម្បីបិទ cookies ជាបណ្តោះអាសន្ន (សម្រាប់ test)"""
+    if os.environ.get("USE_COOKIES", "1") == "0":
+        return None
     candidates = [COOKIES_FILE, "cookies.txt"]
     for path in candidates:
         if path and os.path.isfile(path):
@@ -211,7 +214,9 @@ def download_audio(video_url, out_path_template, max_retries=4):
     """ទាញយកសំឡេង MP3 ពី YouTube (មាន fallback format + retry)"""
     # format selector ធន់ជាងមុន៖ ព្យាយាម itag audio-only ដែលស្គាល់ច្បាស់ជាមុន
     # 251=opus, 250=opus, 249=opus, 140=m4a — បើគ្មានទាំងអស់នេះ fallback ទៅ bestaudio/best
-    format_selector = "251/250/249/140/bestaudio[acodec!=none]/bestaudio/best[acodec!=none]/best"
+    # format ធន់ជាងមុន៖ ឥឡូវ JS runtime ដោះស្រាយ signature/n-challenge បានហើយ
+    # ដូច្នេះមិនចាំបាច់តឹងលើ itag ជាក់លាក់ទៀត — ប្រើ selector ធម្មតាធន់ជាងគេ
+    format_selector = "bestaudio/best"
 
     ydl_opts = {
         "format": format_selector,
