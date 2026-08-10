@@ -194,6 +194,18 @@ def search_youtube(query, max_results=MAX_RESULTS):
         return results
 
 
+COOKIES_FILE = os.path.join(DATA_DIR, "cookies.txt")
+
+
+def _find_cookies_file():
+    """ស្វែងរកឯកសារ cookies.txt ពី DATA_DIR ឬ root folder"""
+    candidates = [COOKIES_FILE, "cookies.txt"]
+    for path in candidates:
+        if path and os.path.isfile(path):
+            return path
+    return None
+
+
 def download_audio(video_url, out_path_template):
     """ទាញយកសំឡេង MP3 ពី YouTube"""
     ydl_opts = {
@@ -208,6 +220,11 @@ def download_audio(video_url, out_path_template):
         "no_warnings": True,
         "noplaylist": True,
     }
+
+    cookies_path = _find_cookies_file()
+    if cookies_path:
+        ydl_opts["cookiefile"] = cookies_path
+
     with yt_dlp.YoutubeDL(ydl_opts) as ydl:
         ydl.download([video_url])
 
@@ -268,7 +285,7 @@ def cmd_start(message):
         message,
         "🎵 សួស្តី! ខ្ញុំជា Bot ស្វែងរកចម្រៀង\n\n"
         "គ្រាន់តែវាយចំណងជើងចម្រៀង ខ្ញុំនឹងស្វែងរកអោយអ្នកភ្លាមៗ!\n"
-        "ឧទាហរណ៍: `ដួងចន្ទប្រណម្យ`",
+        "ឧទាហរណ៍: `ស្រឡាញ់គេម្នាក់ឯង`",
         parse_mode="Markdown",
     )
     # ពេល user ថ្មីចូល bot ជាលើកដំបូង បង្ហាញពាណិជ្ជកម្មភ្លាមៗ (បើមាន)
@@ -346,13 +363,8 @@ def handle_admin_callback(call):
 
     elif action == "setad":
         bot.answer_callback_query(call.id)
-        msg = bot.send_message(
-            chat_id,
-            "🖼 សូមផ្ញើ *រូបភាព* មួយ ជាមួយ caption តាមទម្រង់នេះ:\n\n"
-            "`អត្ថបទផ្សាយពាណិជ្ជកម្ម\n---\nឈ្មោះប៊ូតុង | https://link.com`\n\n"
-            "ឧទាហរណ៍:\n`🔥 បញ្ចុះតម្លៃ 50%!\n---\nមើលឥឡូវនេះ | https://t.me/example`",
-            parse_mode="Markdown",
-        )
+        ad_draft[chat_id] = {}
+        msg = bot.send_message(chat_id, "🖼 សូមផ្ញើ *រូបភាព* សម្រាប់ពាណិជ្ជកម្ម:", parse_mode="Markdown")
         bot.register_next_step_handler(msg, process_ad_photo)
 
     elif action == "preview":
@@ -377,38 +389,75 @@ def handle_admin_callback(call):
         threading.Thread(target=do_broadcast).start()
 
 
+# ------------------ ការកំណត់ពាណិជ្ជកម្ម (សួរជាជំហានៗ) ------------------
+ad_draft = {}  # chat_id -> {"file_id": ..., "caption": ..., "button_text": ...}
+
+
 def process_ad_photo(message):
     if message.from_user is None or message.from_user.id != ADMIN_ID:
         return
-    if message.content_type != "photo" or not message.caption:
-        msg = bot.reply_to(
-            message,
-            "❌ សូមផ្ញើរូបភាពជាមួយ caption តាមទម្រង់ដែលបានណែនាំ។ សូមព្យាយាមម្តងទៀត (/admin):",
-        )
+    chat_id = message.chat.id
+
+    if message.content_type != "photo":
+        msg = bot.reply_to(message, "❌ នេះមិនមែនរូបភាពទេ។ សូមផ្ញើរូបភាពម្តងទៀត:")
+        bot.register_next_step_handler(msg, process_ad_photo)
         return
 
-    parts = message.caption.split("---")
-    if len(parts) != 2 or "|" not in parts[1]:
-        bot.reply_to(
-            message,
-            "❌ ទម្រង់ caption មិនត្រឹមត្រូវ។ ត្រូវការ:\n`អត្ថបទ\n---\nឈ្មោះប៊ូតុង | https://link.com`",
-            parse_mode="Markdown",
-        )
+    ad_draft[chat_id] = {"file_id": message.photo[-1].file_id}
+    msg = bot.send_message(chat_id, "✏️ សូមវាយ *អត្ថបទផ្សាយពាណិជ្ជកម្ម*:", parse_mode="Markdown")
+    bot.register_next_step_handler(msg, process_ad_caption)
+
+
+def process_ad_caption(message):
+    if message.from_user is None or message.from_user.id != ADMIN_ID:
+        return
+    chat_id = message.chat.id
+
+    if not message.text or not message.text.strip():
+        msg = bot.reply_to(message, "❌ សូមវាយអត្ថបទផ្សាយពាណិជ្ជកម្ម:")
+        bot.register_next_step_handler(msg, process_ad_caption)
         return
 
-    caption_text = parts[0].strip()
-    button_part = parts[1].strip()
-    button_text, button_url = [p.strip() for p in button_part.split("|", 1)]
+    ad_draft.setdefault(chat_id, {})["caption"] = message.text.strip()
+    msg = bot.send_message(chat_id, "🔘 សូមវាយ *ឈ្មោះប៊ូតុង* (ឧទាហរណ៍: មើលឥឡូវនេះ):", parse_mode="Markdown")
+    bot.register_next_step_handler(msg, process_ad_button_text)
 
+
+def process_ad_button_text(message):
+    if message.from_user is None or message.from_user.id != ADMIN_ID:
+        return
+    chat_id = message.chat.id
+
+    if not message.text or not message.text.strip():
+        msg = bot.reply_to(message, "❌ សូមវាយឈ្មោះប៊ូតុង:")
+        bot.register_next_step_handler(msg, process_ad_button_text)
+        return
+
+    ad_draft.setdefault(chat_id, {})["button_text"] = message.text.strip()
+    msg = bot.send_message(chat_id, "🔗 សូមវាយ *តំណលីង* (ត្រូវចាប់ផ្តើមដោយ http:// ឬ https://):", parse_mode="Markdown")
+    bot.register_next_step_handler(msg, process_ad_button_url)
+
+
+def process_ad_button_url(message):
+    if message.from_user is None or message.from_user.id != ADMIN_ID:
+        return
+    chat_id = message.chat.id
+
+    button_url = (message.text or "").strip()
     if not button_url.startswith(("http://", "https://")):
-        bot.reply_to(message, "❌ តំណលីង (URL) ត្រូវចាប់ផ្តើមដោយ http:// ឬ https://")
+        msg = bot.reply_to(message, "❌ តំណលីង (URL) ត្រូវចាប់ផ្តើមដោយ http:// ឬ https:// សូមផ្ញើម្តងទៀត:")
+        bot.register_next_step_handler(msg, process_ad_button_url)
         return
 
-    file_id = message.photo[-1].file_id
-    db_set_ad(file_id, caption_text, button_text, button_url)
+    draft = ad_draft.pop(chat_id, {})
+    if not draft.get("file_id") or not draft.get("caption") or not draft.get("button_text"):
+        bot.send_message(chat_id, "❌ មានបញ្ហា សូមចាប់ផ្តើមម្តងទៀតតាម /admin")
+        return
 
-    bot.reply_to(message, "✅ បានកំណត់ពាណិជ្ជកម្មរួចរាល់!")
-    send_ad_to(message.chat.id, db_get_ad())
+    db_set_ad(draft["file_id"], draft["caption"], draft["button_text"], button_url)
+
+    bot.send_message(chat_id, "✅ បានកំណត់ពាណិជ្ជកម្មរួចរាល់!")
+    send_ad_to(chat_id, db_get_ad())
 
 
 @bot.message_handler(func=lambda m: m.content_type == "text" and not m.text.startswith("/"))
