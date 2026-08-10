@@ -15,4 +15,3 @@ RUN pip install --no-cache-dir -r requirements.txt
 COPY . .
 
 CMD ["python", "song_search_bot.py"]
-yt-dlp[default] @ git+https://github.com/yt-dlp/yt-dlp.git
