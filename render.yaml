@@ -1,0 +1,16 @@
+services:
+  - type: worker
+    name: song-search-bot
+    env: python
+    plan: starter
+    buildCommand: "apt-get update && apt-get install -y ffmpeg && pip install -r requirements.txt"
+    startCommand: "python song_search_bot.py"
+    envVars:
+      - key: BOT_TOKEN
+        sync: false
+      - key: DATA_DIR
+        value: /data
+    disk:
+      name: bot-data
+      mountPath: /data
+      sizeGB: 1
