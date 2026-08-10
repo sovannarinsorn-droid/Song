@@ -576,4 +576,11 @@ def handle_download(call):
 if __name__ == "__main__":
     print("🤖 Song Search Bot កំពុងដំណើរការ...")
     threading.Thread(target=broadcast_scheduler_loop, daemon=True).start()
-    bot.infinity_polling(skip_pending=True)
+    # Telegram API ជួនកាល response 502/504 បណ្តោះអាសន្ន (server side)
+    # ដូច្នេះ wrap ក្នុង retry loop កុំអោយ process crash ទាំងស្រុងពេលនោះ
+    while True:
+        try:
+            bot.infinity_polling(skip_pending=True, timeout=30, long_polling_timeout=30)
+        except Exception as e:
+            print(f"⚠️ Polling crashed: {e}. កំពុងព្យាយាមម្តងទៀតក្នុង 5 វិនាទី...")
+            time.sleep(5)
