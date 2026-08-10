@@ -176,6 +176,7 @@ def search_youtube(query, max_results=MAX_RESULTS):
         "extract_flat": "in_playlist",
         "default_search": f"ytsearch{max_results}",
         "noplaylist": True,
+        "js_runtimes": ["node"],
     }
     with yt_dlp.YoutubeDL(ydl_opts) as ydl:
         info = ydl.extract_info(query, download=False)
@@ -206,12 +207,11 @@ def _find_cookies_file():
     return None
 
 
-def download_audio(video_url, out_path_template, max_retries=2):
+def download_audio(video_url, out_path_template, max_retries=4):
     """ទាញយកសំឡេង MP3 ពី YouTube (មាន fallback format + retry)"""
-    # format selector ធន់ជាងមុន៖ ព្យាយាម audio-only ជាមុន បន្ទាប់មកទៅ any format ណាដែលមាន audio
-    format_selector = (
-        "bestaudio[ext=m4a]/bestaudio/best[acodec!=none]/best"
-    )
+    # format selector ធន់ជាងមុន៖ ព្យាយាម itag audio-only ដែលស្គាល់ច្បាស់ជាមុន
+    # 251=opus, 250=opus, 249=opus, 140=m4a — បើគ្មានទាំងអស់នេះ fallback ទៅ bestaudio/best
+    format_selector = "251/250/249/140/bestaudio[acodec!=none]/bestaudio/best[acodec!=none]/best"
 
     ydl_opts = {
         "format": format_selector,
@@ -224,10 +224,7 @@ def download_audio(video_url, out_path_template, max_retries=2):
         "quiet": True,
         "no_warnings": True,
         "noplaylist": True,
-        # ជួយកុំឱ্យ YouTube រាំងខ្ទប់ដោយចាត់ទុកជា client ផ្សេង (web -> android fallback)
-        "extractor_args": {
-            "youtube": {"player_client": ["android", "web"]}
-        },
+        "js_runtimes": ["node"],
     }
 
     cookies_path = _find_cookies_file()
@@ -235,9 +232,14 @@ def download_audio(video_url, out_path_template, max_retries=2):
         ydl_opts["cookiefile"] = cookies_path
 
     last_error = None
+    client_variants = [None, ["android"], ["ios"], ["web"]]
     for attempt in range(1, max_retries + 1):
+        client = client_variants[min(attempt - 1, len(client_variants) - 1)]
+        opts = dict(ydl_opts)
+        if client:
+            opts["extractor_args"] = {"youtube": {"player_client": client}}
         try:
-            with yt_dlp.YoutubeDL(ydl_opts) as ydl:
+            with yt_dlp.YoutubeDL(opts) as ydl:
                 ydl.download([video_url])
             return  # ជោគជ័យ
         except yt_dlp.utils.DownloadError as e:
