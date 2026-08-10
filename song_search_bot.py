@@ -206,10 +206,15 @@ def _find_cookies_file():
     return None
 
 
-def download_audio(video_url, out_path_template):
-    """ទាញយកសំឡេង MP3 ពី YouTube"""
+def download_audio(video_url, out_path_template, max_retries=2):
+    """ទាញយកសំឡេង MP3 ពី YouTube (មាន fallback format + retry)"""
+    # format selector ធន់ជាងមុន៖ ព្យាយាម audio-only ជាមុន បន្ទាប់មកទៅ any format ណាដែលមាន audio
+    format_selector = (
+        "bestaudio[ext=m4a]/bestaudio/best[acodec!=none]/best"
+    )
+
     ydl_opts = {
-        "format": "bestaudio/best",
+        "format": format_selector,
         "outtmpl": out_path_template,
         "postprocessors": [{
             "key": "FFmpegExtractAudio",
@@ -219,14 +224,28 @@ def download_audio(video_url, out_path_template):
         "quiet": True,
         "no_warnings": True,
         "noplaylist": True,
+        # ជួយកុំឱ্យ YouTube រាំងខ្ទប់ដោយចាត់ទុកជា client ផ្សេង (web -> android fallback)
+        "extractor_args": {
+            "youtube": {"player_client": ["android", "web"]}
+        },
     }
 
     cookies_path = _find_cookies_file()
     if cookies_path:
         ydl_opts["cookiefile"] = cookies_path
 
-    with yt_dlp.YoutubeDL(ydl_opts) as ydl:
-        ydl.download([video_url])
+    last_error = None
+    for attempt in range(1, max_retries + 1):
+        try:
+            with yt_dlp.YoutubeDL(ydl_opts) as ydl:
+                ydl.download([video_url])
+            return  # ជោគជ័យ
+        except yt_dlp.utils.DownloadError as e:
+            last_error = e
+            if attempt < max_retries:
+                time.sleep(2)  # ​រង់ចាំបន្តិចមុនព្យាយាមម្តងទៀត
+                continue
+    raise last_error
 
 
 # ------------------ ការផ្សាយពាណិជ្ជកម្ម (ADS) ------------------
