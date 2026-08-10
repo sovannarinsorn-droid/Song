@@ -216,7 +216,10 @@ def download_audio(video_url, out_path_template, max_retries=4):
     # 251=opus, 250=opus, 249=opus, 140=m4a — បើគ្មានទាំងអស់នេះ fallback ទៅ bestaudio/best
     # format ធន់ជាងមុន៖ ឥឡូវ JS runtime ដោះស្រាយ signature/n-challenge បានហើយ
     # ដូច្នេះមិនចាំបាច់តឹងលើ itag ជាក់លាក់ទៀត — ប្រើ selector ធម្មតាធន់ជាងគេ
-    format_selector = "bestaudio/best"
+    # format ធន់ជាងមុន៖ "bestaudio*" (មាន *) អនុញ្ញាតឱ្យយក format ដែល yt-dlp
+    # មិនទាន់ដឹងច្បាស់ថាមាន audio codec អ្វី (ជួនកាល client មួយចំនួនមិនប្រាប់ acodec)
+    # ចុងក្រោយ fallback ទៅ "best" ធម្មតា បើគ្មាន audio-only format ណាមួយសោះ
+    format_selector = "bestaudio*/best*/best"
 
     ydl_opts = {
         "format": format_selector,
@@ -229,6 +232,7 @@ def download_audio(video_url, out_path_template, max_retries=4):
         "quiet": True,
         "no_warnings": True,
         "noplaylist": True,
+        "geo_bypass": True,
         "js_runtimes": {"node": {}},
     }
 
@@ -237,7 +241,10 @@ def download_audio(video_url, out_path_template, max_retries=4):
         ydl_opts["cookiefile"] = cookies_path
 
     last_error = None
-    client_variants = [None, ["android"], ["ios"], ["web"]]
+    # បន្ថែម client variants ច្រើនជាងមុន — "android"/"ios" ជាញឹកញាប់ត្រូវការ PO token
+    # ចាប់ពី 2025 ចុងក្រោយ, ដូច្នេះដាក់ "web", "tv", "mweb" ជា fallback ផងដែរ
+    client_variants = [None, ["android"], ["ios"], ["web"], ["tv"], ["mweb"]]
+    max_retries = max(max_retries, len(client_variants))
     for attempt in range(1, max_retries + 1):
         client = client_variants[min(attempt - 1, len(client_variants) - 1)]
         opts = dict(ydl_opts)
@@ -546,11 +553,12 @@ def handle_download(call):
         mp3_path = os.path.join(DOWNLOAD_DIR, f"{chat_id}_{idx}.mp3")
         try:
             download_audio(song["url"], out_template)
+            # ផ្ញើជា document (.mp3 file ធម្មតា) ជំនួសឱ្យ audio player
+            safe_title = "".join(c for c in song["title"] if c not in '\\/:*?"<>|').strip() or "song"
             with open(mp3_path, "rb") as f:
-                bot.send_audio(
+                bot.send_document(
                     chat_id, f,
-                    title=song["title"],
-                    performer=song["uploader"],
+                    visible_file_name=f"{safe_title}.mp3",
                     caption=f"🎵 {song['title']}",
                 )
             bot.delete_message(chat_id, status.message_id)
