@@ -1,15 +1,3 @@
-#!/usr/bin/env python3
-# -*- coding: utf-8 -*-
-"""
-Song Search Bot - ស្វែងរកចម្រៀងតាមចំណងជើង (YouTube)
-តម្រូវការ: pip install pyTelegramBotAPI yt-dlp
-រត់លើ Termux ឬ Render (Background Worker)
-
-សម្គាល់អំពី Render: filesystem របស់ Render លុបចោលរាល់ file (SQLite/downloads)
-រាល់ពេល deploy ឡើងវិញ លុះត្រាតែភ្ជាប់ "Persistent Disk" ។ កូដនេះអាន DB_PATH
-ពី environment variable ដើម្បីអោយអាចដាក់លើ Disk path (ឧ. /data/bot.db) បាន
-ដូច្នេះទិន្នន័យមិនបាត់ពេល deploy ថ្មីទៀត។ សូមមើល render.yaml ភ្ជាប់មកជាមួយ។
-"""
 
 import os
 import sqlite3
@@ -20,14 +8,11 @@ import telebot
 from telebot import types
 import yt_dlp
 
-# ------------------ CONFIG ------------------
 BOT_TOKEN = os.environ.get("BOT_TOKEN", "PUT_YOUR_BOT_TOKEN_HERE")
 ADMIN_ID = 8266854899
 MAX_RESULTS = 5
-BROADCAST_INTERVAL_SECONDS = 6 * 60 * 60  # ផ្សាយពាណិជ្ជកម្មរៀងរាល់ 6 ម៉ោង
+BROADCAST_INTERVAL_SECONDS = 6 * 60 * 60
 
-# DB_PATH / DOWNLOAD_DIR គួរតែចង្អុលទៅ Persistent Disk (ឧ. /data) លើ Render
-# ដើម្បីកុំអោយទិន្នន័យបាត់ពេល redeploy។ Default ជា local folder សម្រាប់ Termux។
 DATA_DIR = os.environ.get("DATA_DIR", "data")
 DB_PATH = os.environ.get("DB_PATH", os.path.join(DATA_DIR, "bot.db"))
 DOWNLOAD_DIR = os.path.join(DATA_DIR, "downloads")
@@ -37,12 +22,12 @@ os.makedirs(DOWNLOAD_DIR, exist_ok=True)
 
 bot = telebot.TeleBot(BOT_TOKEN)
 
-# ភ្ជាប់លទ្ធផលស្វែងរកសម្រាប់អ្នកប្រើនីមួយៗ (in-memory ប៉ុណ្ណោះ, key = chat_id)
-# សម្គាល់៖ cache នេះមិនចាំបាច់ persist ទេ ព្រោះជាលទ្ធផលបណ្តោះអាសន្ន
+telebot.apihelper.READ_TIMEOUT = 40
+telebot.apihelper.CONNECT_TIMEOUT = 15
+
 search_cache = {}
 
 
-# ------------------ DATABASE (persist ស្ថិតិ + user list) ------------------
 def db_connect():
     conn = sqlite3.connect(DB_PATH)
     conn.execute("""
@@ -157,7 +142,6 @@ def db_stats():
     return users, searches, downloads
 
 
-# ------------------ HELPERS ------------------
 def format_duration(seconds):
     if not seconds:
         return "??:??"
@@ -211,18 +195,9 @@ def _find_cookies_file():
 
 
 def download_audio(video_url, out_path_template, max_retries=4):
-    """ទាញយកសំឡេង MP3 ពី YouTube (មាន fallback format + retry)"""
-    # format selector ធន់ជាងមុន៖ ព្យាយាម itag audio-only ដែលស្គាល់ច្បាស់ជាមុន
-    # 251=opus, 250=opus, 249=opus, 140=m4a — បើគ្មានទាំងអស់នេះ fallback ទៅ bestaudio/best
-    # format ធន់ជាងមុន៖ ឥឡូវ JS runtime ដោះស្រាយ signature/n-challenge បានហើយ
-    # ដូច្នេះមិនចាំបាច់តឹងលើ itag ជាក់លាក់ទៀត — ប្រើ selector ធម្មតាធន់ជាងគេ
-    # format ធន់ជាងមុន៖ "bestaudio*" (មាន *) អនុញ្ញាតឱ្យយក format ដែល yt-dlp
-    # មិនទាន់ដឹងច្បាស់ថាមាន audio codec អ្វី (ជួនកាល client មួយចំនួនមិនប្រាប់ acodec)
-    # ចុងក្រោយ fallback ទៅ "best" ធម្មតា បើគ្មាន audio-only format ណាមួយសោះ
-    format_selector = "bestaudio*/best*/best"
-
+    """ទាញយកសំឡេង MP3 ពី YouTube (ការកំណត់សាមញ្ញ)"""
     ydl_opts = {
-        "format": format_selector,
+        "format": "bestaudio/best",
         "outtmpl": out_path_template,
         "postprocessors": [{
             "key": "FFmpegExtractAudio",
@@ -232,37 +207,12 @@ def download_audio(video_url, out_path_template, max_retries=4):
         "quiet": True,
         "no_warnings": True,
         "noplaylist": True,
-        "geo_bypass": True,
-        "js_runtimes": {"node": {}},
     }
 
-    cookies_path = _find_cookies_file()
-    if cookies_path:
-        ydl_opts["cookiefile"] = cookies_path
-
-    last_error = None
-    # បន្ថែម client variants ច្រើនជាងមុន — "android"/"ios" ជាញឹកញាប់ត្រូវការ PO token
-    # ចាប់ពី 2025 ចុងក្រោយ, ដូច្នេះដាក់ "web", "tv", "mweb" ជា fallback ផងដែរ
-    client_variants = [None, ["android"], ["ios"], ["web"], ["tv"], ["mweb"]]
-    max_retries = max(max_retries, len(client_variants))
-    for attempt in range(1, max_retries + 1):
-        client = client_variants[min(attempt - 1, len(client_variants) - 1)]
-        opts = dict(ydl_opts)
-        if client:
-            opts["extractor_args"] = {"youtube": {"player_client": client}}
-        try:
-            with yt_dlp.YoutubeDL(opts) as ydl:
-                ydl.download([video_url])
-            return  # ជោគជ័យ
-        except yt_dlp.utils.DownloadError as e:
-            last_error = e
-            if attempt < max_retries:
-                time.sleep(2)  # ​រង់ចាំបន្តិចមុនព្យាយាមម្តងទៀត
-                continue
-    raise last_error
+    with yt_dlp.YoutubeDL(ydl_opts) as ydl:
+        ydl.download([video_url])
 
 
-# ------------------ ការផ្សាយពាណិជ្ជកម្ម (ADS) ------------------
 def build_ad_markup(ad):
     markup = types.InlineKeyboardMarkup()
     markup.add(types.InlineKeyboardButton(text=ad["button_text"], url=ad["button_url"]))
@@ -290,7 +240,7 @@ def broadcast_ad():
             success += 1
         except Exception:
             failed += 1
-        time.sleep(0.05)  # ជៀសវាង Telegram flood limit
+        time.sleep(0.05)
     return success, failed
 
 
@@ -309,7 +259,6 @@ def broadcast_scheduler_loop():
             pass
 
 
-# ------------------ HANDLERS ------------------
 @bot.message_handler(commands=["start", "help"])
 def cmd_start(message):
     username = message.from_user.username if message.from_user else ""
@@ -321,7 +270,6 @@ def cmd_start(message):
         "ឧទាហរណ៍: `ស្រឡាញ់គេម្នាក់ឯង`",
         parse_mode="Markdown",
     )
-    # ពេល user ថ្មីចូល bot ជាលើកដំបូង បង្ហាញពាណិជ្ជកម្មភ្លាមៗ (បើមាន)
     if is_new:
         ad = db_get_ad()
         if ad and ad.get("file_id"):
@@ -345,7 +293,6 @@ def cmd_stats(message):
     )
 
 
-# ------------------ ADMIN PANEL ------------------
 def admin_menu_markup():
     markup = types.InlineKeyboardMarkup(row_width=2)
     markup.add(
@@ -422,8 +369,7 @@ def handle_admin_callback(call):
         threading.Thread(target=do_broadcast).start()
 
 
-# ------------------ ការកំណត់ពាណិជ្ជកម្ម (សួរជាជំហានៗ) ------------------
-ad_draft = {}  # chat_id -> {"file_id": ..., "caption": ..., "button_text": ...}
+ad_draft = {}
 
 
 def process_ad_photo(message):
@@ -553,7 +499,6 @@ def handle_download(call):
         mp3_path = os.path.join(DOWNLOAD_DIR, f"{chat_id}_{idx}.mp3")
         try:
             download_audio(song["url"], out_template)
-            # ផ្ញើជា document (.mp3 file ធម្មតា) ជំនួសឱ្យ audio player
             safe_title = "".join(c for c in song["title"] if c not in '\\/:*?"<>|').strip() or "song"
             with open(mp3_path, "rb") as f:
                 bot.send_document(
@@ -572,12 +517,9 @@ def handle_download(call):
     threading.Thread(target=do_download).start()
 
 
-# ------------------ RUN ------------------
 if __name__ == "__main__":
     print("🤖 Song Search Bot កំពុងដំណើរការ...")
     threading.Thread(target=broadcast_scheduler_loop, daemon=True).start()
-    # Telegram API ជួនកាល response 502/504 បណ្តោះអាសន្ន (server side)
-    # ដូច្នេះ wrap ក្នុង retry loop កុំអោយ process crash ទាំងស្រុងពេលនោះ
     while True:
         try:
             bot.infinity_polling(skip_pending=True, timeout=30, long_polling_timeout=30)
