@@ -179,6 +179,8 @@ def search_youtube(query, max_results=MAX_RESULTS):
         return results
 
 
+# ដាក់ឯកសារ cookies.txt (export ពី browser ដែល login YouTube រួច) នៅ path: {DATA_DIR}/cookies.txt
+# ឧទាហរណ៍លើ Render persistent disk: /data/cookies.txt
 COOKIES_FILE = os.path.join(DATA_DIR, "cookies.txt")
 
 
@@ -208,6 +210,10 @@ def download_audio(video_url, out_path_template, max_retries=4):
         "no_warnings": True,
         "noplaylist": True,
     }
+
+    cookies_path = _find_cookies_file()
+    if cookies_path:
+        ydl_opts["cookiefile"] = cookies_path
 
     with yt_dlp.YoutubeDL(ydl_opts) as ydl:
         ydl.download([video_url])
